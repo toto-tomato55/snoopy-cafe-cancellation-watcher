@@ -1,0 +1,55 @@
+name: Check reservation availability
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/5 * * * *'
+
+concurrency:
+  group: reservation-cancel-watch
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Restore notification state
+        uses: actions/cache/restore@v4
+        with:
+          path: .state
+          key: reservation-state-${{ github.run_id }}
+          restore-keys: |
+            reservation-state-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check reservation
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          EBICA_URL: https://booking.ebica.jp/webrsv/plan/e014001307/22192/158405
+          TARGET_DATE: '2026-10-03'
+          TARGET_TIMES: 11:00,11:15,11:30,11:45,12:00
+          STATE_FILE: .state/last-status.json
+        run: npm run check
+
+      - name: Save notification state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .state
+          key: reservation-state-${{ github.run_id }}

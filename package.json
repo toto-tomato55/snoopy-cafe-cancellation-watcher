@@ -1,0 +1,17 @@
+{
+  "name": "snoopy-museum-cafe-cancel-watch",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cancellation watcher for PEANUTS Cafe SNOOPY MUSEUM TOKYO reservations.",
+  "scripts": {
+    "check": "node src/check-reservation.js",
+    "check:dry-run": "node -e \"process.env.DRY_RUN='1'; import('./src/check-reservation.js')\""
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0"
+  }
+}
