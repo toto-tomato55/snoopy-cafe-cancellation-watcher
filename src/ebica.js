@@ -84,7 +84,7 @@ function extractVisibleDates($, yearMonthLabel) {
     .find('thead th')
     .toArray()
     .map((element) => normalizeText($(element).text()))
-    .filter((text) => /^\d{1,2}\s+[日月火水木金土]$/.test(text));
+    .filter((text) => /^\d{1,2}\s*[日月火水木金土]$/.test(text));
 
   if (headerCells.length === 0) {
     throw new Error('Could not find calendar date headers.');
@@ -105,7 +105,14 @@ function extractVisibleDates($, yearMonthLabel) {
 }
 
 function extractTimeRows($) {
-  const bodyTable = $('table').eq(1);
+  const bodyTable = $('table')
+    .filter((_, table) =>
+      $(table)
+        .find('tbody tr th')
+        .toArray()
+        .some((cell) => /^\d{2}:\d{2}$/.test(normalizeText($(cell).text()))),
+    )
+    .first();
   if (!bodyTable.length) {
     throw new Error('Could not find the reservation time table.');
   }
