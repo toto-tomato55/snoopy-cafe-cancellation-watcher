@@ -3,7 +3,10 @@ name: Check reservation availability
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/5 * * * *'
+    # GitHub may heavily delay very frequent scheduled workflows. Each scheduled
+    # job stays alive and checks every five minutes, while this schedule starts
+    # a replacement often enough to avoid gaps when a launch is delayed.
+    - cron: '17 */3 * * *'
 
 concurrency:
   group: reservation-cancel-watch
@@ -15,7 +18,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 355
 
     steps:
       - name: Checkout
@@ -45,7 +48,25 @@ jobs:
           TARGET_DATE: '2026-10-03'
           TARGET_TIMES: 11:00,11:15,11:30,11:45,12:00
           STATE_FILE: .state/last-status.json
-        run: npm run check
+          CHECK_ITERATIONS: ${{ github.event_name == 'schedule' && '70' || '1' }}
+        shell: bash
+        run: |
+          failures=0
+          for ((iteration = 1; iteration <= CHECK_ITERATIONS; iteration++)); do
+            echo "Reservation check ${iteration}/${CHECK_ITERATIONS}"
+            if ! npm run check; then
+              failures=$((failures + 1))
+            fi
+
+            if ((iteration < CHECK_ITERATIONS)); then
+              sleep 300
+            fi
+          done
+
+          if ((failures == CHECK_ITERATIONS)); then
+            echo "Every reservation check failed."
+            exit 1
+          fi
 
       - name: Save notification state
         if: always()
