@@ -2,6 +2,12 @@ name: Check reservation availability
 
 on:
   workflow_dispatch:
+    inputs:
+      continuous:
+        description: Keep checking every five minutes
+        required: false
+        type: boolean
+        default: false
   schedule:
     # GitHub may heavily delay very frequent scheduled workflows. Each scheduled
     # job stays alive and checks every five minutes, while this schedule starts
@@ -48,7 +54,7 @@ jobs:
           TARGET_DATE: '2026-10-03'
           TARGET_TIMES: 11:00,11:15,11:30,11:45,12:00
           STATE_FILE: .state/last-status.json
-          CHECK_ITERATIONS: ${{ github.event_name == 'schedule' && '70' || '1' }}
+          CHECK_ITERATIONS: ${{ (github.event_name == 'schedule' || inputs.continuous) && '70' || '1' }}
         shell: bash
         run: |
           failures=0
