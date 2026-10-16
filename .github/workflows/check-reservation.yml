@@ -8,11 +8,6 @@ on:
         required: false
         type: boolean
         default: false
-  schedule:
-    # GitHub may heavily delay very frequent scheduled workflows. Each scheduled
-    # job stays alive and checks every five minutes, while this schedule starts
-    # a replacement often enough to avoid gaps when a launch is delayed.
-    - cron: '17 */3 * * *'
 
 concurrency:
   group: reservation-cancel-watch
