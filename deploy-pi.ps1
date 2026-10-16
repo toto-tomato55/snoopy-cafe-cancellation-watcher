@@ -5,7 +5,7 @@ $stage = Join-Path ([IO.Path]::GetTempPath()) ('galleria-stock-' + [guid]::NewGu
 New-Item -ItemType Directory -Path $stage | Out-Null
 try {
     # Transfer only service source, never screenshots, local data or credentials.
-    foreach ($file in @('main.py', 'stock_monitor.py', 'requirements.txt', 'test_stock_monitor.py', 'README.md', 'AGENTS.md')) {
+    foreach ($file in @('main.py', 'stock_monitor.py', 'deals.py', 'deal_rules.json', 'requirements.txt', 'test_stock_monitor.py', 'test_deals.py', 'README.md', 'AGENTS.md')) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $stage
     }
     & $tool deploy galleria-stock $stage

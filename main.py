@@ -20,6 +20,13 @@ def main():
     interval = int(os.getenv("INTERVAL_SECONDS", "60"))
     if interval < 60:
         raise ValueError("INTERVAL_SECONDS must be at least 60")
+    mode = os.getenv("MONITOR_MODE", "deals")
+    if mode == "deals":
+        from deals import run_deals
+        run_deals(args.once, interval)
+        return
+    if mode != "single":
+        raise ValueError("Unknown MONITOR_MODE")
     url = os.getenv("PRODUCT_URL", PRODUCT_URL)
     if url != PRODUCT_URL:
         raise ValueError("This monitor is configured for MC21585 only")

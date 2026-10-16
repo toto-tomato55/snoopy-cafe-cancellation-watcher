@@ -1,26 +1,44 @@
-# GALLERIA 在庫復活通知
+# GALLERIA / OZ Gaming お得PC通知
 
-2026-10-16にカフェ予約監視から変更。S-monitor (Raspberry Pi) の
-`galleria-stock.service` が60秒ごとにドスパラの商品ページを取得し、
-在庫復活時に従来のDiscordチャンネルへ通知します。
+S-monitor (Raspberry Pi) が2店の商品一覧を60秒ごとに巡回します。
+一覧から価格条件に合うPCを抽出し、商品ページでもGPU・CPU・価格・在庫を
+確認できた候補だけ、従来のDiscordチャンネルへ通知します。
 
-- 対象: GALLERIA XMC9A-R5x-GD 動画配信向けモデル（ガンメタル）
-- 商品: https://www.dospara.co.jp/TC30/MC21585.html
-- 価格も通知に表示します。画像の価格を上限とする条件は設けていません。
-- 商品名・SKU・JSON-LD在庫・商品欄の出荷表示を照合。不一致や取得失敗は在庫なしとして扱いません。
-- 同じ在庫では連投せず、在庫なしを確認後の復活で再通知します。
-- 状態はPiの `shared/data/status.json` に保存し、再起動・再配置で引き継ぎます。
-- 3回連続で失敗すると障害をDiscordへ通知（最大1時間に1回）。復旧時にも通知します。
-- 「販売終了」は在庫切れとは分けて通知します。
-- HTTP 404/410は「掲載なし・在庫確認不能」として1分ごとに再掲載を確認します。
-  同じ掲載なし状態では通知を繰り返さず、ページ再掲載と在庫復活を区別して通知します。
-- 通知自体が失敗するとDiscordには届かないため、サービスログでも確認できます。
-- 初回の正常確認後に、Piから監視開始兼通知テストを送ります。
-- 購入・カート操作は行いません。
+## 通知条件
+
+本体の税込価格です。送料・オプション・カスタマイズ代は含みません。
+
+| GPU | 上限価格 |
+| --- | ---: |
+| RTX 5070 Ti | 280,000円 |
+| RTX 5080 | 320,000円 |
+| RTX 5090 | 280,000円 |
+
+ユーザー指定: 「RTX5080 32万以下 と 5070Ti以上 28万以下」。
+対象はデスクトップPC本体です。ノートPC、単体GPU、周辺機器は含めません。
+条件は `deal_rules.json` に保存しています。
+
+## 取得範囲
+
+- GALLERIA: ドスパラのTC30一覧をGPU別・価格昇順で取得。各GPUの上限額を
+  超えるページまで確認します。ブランド名がGALLERIAの商品だけが対象です。
+- OZ Gaming: 公式の全商品一覧を価格昇順で取得。32万円を超えるページまで確認します。
+- 一覧の価格順・GPU絞り込み・ページ送りが崩れた場合はエラーとして扱います。
+- 候補は詳細ページを再取得し、一覧から構成が変わっていないことと在庫を確認します。
+- 詳細を確認できなかった商品は通知せず、次回に再試行します。
+- 初回から条件内で購入可能な商品があれば通知します。
+- 同じ商品・価格は連投しません。さらに値下がり、条件外からの再値下げ、
+  条件内での再入荷時には再通知します。再起動後も通知履歴を保持します。
+- 店舗ごとに独立して処理し、3回連続失敗時はDiscordへ障害を通知します。
+  同じ障害の通知は最大1時間に1回です。復旧時も通知します。
+
+各店の一覧を読む方式で、検索APIやAI APIを毎分呼びません。公開ページへの掲載や
+キャッシュ更新前の情報は検出できません。ネットワークや店側の制限によって
+周期が延びる場合があります。購入操作は行いません。
 
 ## ローカル確認
 
-`.env.example` の設定を `.env` に置きます。WebhookはGitに含めません。
+`.env.example` を参考に `.env` を設定します。WebhookをGitに含めないでください。
 
 ```powershell
 python -m venv .venv
@@ -29,14 +47,14 @@ python -m venv .venv
 .\.venv\Scripts\python.exe main.py --once
 ```
 
-`--once` は在庫取得だけを行い、通知・状態保存はしません。
-404/410時は掲載なしの説明を表示します。正常に在庫を取得できたという意味ではありません。
+`--once` は実サイトを一巡し、結果を表示します。Discord送信と状態保存は行いません。
+テストは合成データでの価格境界・誤通知・再送・重複防止に加え、旧監視の回帰も含みます。
 
 ## Pi運用
 
-ソースはこのフォルダ、実行先はS-monitorです。
-配置スクリプトは設定済みサービスのソース更新用で、Piの既存設定を保持します。
-Webhookなどの設定変更は `pi env` で別途行います。
+サービス名は既存の `galleria-stock.service` を引き継いでいます。
+新しい通知履歴は `shared/data/deals-status.json` です。旧単品監視の
+`shared/data/status.json` と混ぜません。Pi再起動時の自動起動・障害時の再起動はsystemdが担当します。
 
 ```powershell
 .\deploy-pi.ps1
@@ -44,11 +62,11 @@ C:\claude-tools\raspberrypi-5plus\bin\pi.cmd env galleria-stock "C:\claude-tools
 C:\claude-tools\raspberrypi-5plus\bin\pi.cmd status galleria-stock
 C:\claude-tools\raspberrypi-5plus\bin\pi.cmd logs galleria-stock
 C:\claude-tools\raspberrypi-5plus\bin\pi.cmd stop galleria-stock
-C:\claude-tools\raspberrypi-5plus\bin\pi.cmd start galleria-stock
 ```
 
-systemdがPi起動時の自動起動と、クラッシュ時の再起動を担当します。
-PCを終了してもPiが稼働しネット接続があれば監視は継続します。
+配置はソースだけをステージングし、Piの設定・データを保持します。
+設定の転送は `pi env` で別途行います。`MONITOR_MODE=deals` が現在のモードです。
+`INTERVAL_SECONDS=60`、`DEAL_STATE_FILE=data/deals-status.json` を使用します。
 
-旧カフェ監視の `src/` は履歴用に保持。GitHub Actionsは無効で定期スケジュールも削除済みです。
-GitHubの実行枠に依存せず、Pi側で監視します。
+旧MC21585の単品監視は `MONITOR_MODE=single` でのみ実行できます。
+旧カフェ監視の `src/` は履歴用です。カフェのGitHub Actionsは引き続き無効です。
