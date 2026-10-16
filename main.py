@@ -8,7 +8,7 @@ import time
 import requests
 from dotenv import load_dotenv
 
-from stock_monitor import Monitor, PRODUCT_URL, fetch_stock, send_discord
+from stock_monitor import Monitor, PRODUCT_URL, ProductPageMissing, fetch_stock, send_discord
 
 
 def main():
@@ -25,8 +25,13 @@ def main():
         raise ValueError("This monitor is configured for MC21585 only")
     session = requests.Session()
     if args.once:
-        stock = fetch_stock(session, url)
-        print(f"{stock.name}\n{stock.price:,} JPY | {stock.availability} | {stock.delivery}")
+        try:
+            stock = fetch_stock(session, url)
+            print(f"{stock.name}\n{stock.price:,} JPY | {stock.availability} | {stock.delivery}")
+        except ProductPageMissing as error:
+            print(f"{error}\n在庫は確認不能。常駐監視は再掲載を1分ごとに確認します。")
+        finally:
+            session.close()
         return
     webhook = os.getenv("DISCORD_WEBHOOK_URL", "")
     if not webhook.startswith("https://discord.com/api/webhooks/"):
@@ -43,6 +48,11 @@ def main():
             started = time.monotonic()
             try:
                 monitor.check_once()
+            except ProductPageMissing as error:
+                try:
+                    monitor.record_page_missing(error)
+                except Exception as notification_error:
+                    monitor.record_failure(notification_error)
             except Exception as error:
                 monitor.record_failure(error)
             stop.wait(max(0, interval - (time.monotonic() - started)))

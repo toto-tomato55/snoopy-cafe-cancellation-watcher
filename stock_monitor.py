@@ -18,6 +18,12 @@ UNAVAILABLE = {"OutOfStock", "SoldOut", "Discontinued"}
 STOCK_SELECTOR = ".p-product-show-detail__delivery-line"
 
 
+class ProductPageMissing(RuntimeError):
+    def __init__(self, status_code):
+        self.status_code = status_code
+        super().__init__(f"商品ページが見つかりません（HTTP {status_code}）")
+
+
 def timestamp():
     return datetime.now(timezone.utc).isoformat()
 
@@ -30,6 +36,12 @@ class Stock:
     available: bool
     availability: str
     delivery: str
+
+    @property
+    def sale_ended(self):
+        return self.availability == "Discontinued" or any(
+            word in self.delivery for word in ("販売終了", "販売を終了")
+        )
 
 
 def products(value):
@@ -86,9 +98,11 @@ def fetch_stock(session, url=PRODUCT_URL):
         "Accept-Language": "ja,en;q=0.5",
         "Cache-Control": "no-cache",
     })
-    response.raise_for_status()
     if urlparse(response.url).hostname != "www.dospara.co.jp":
         raise ValueError("Product redirected to an unexpected host")
+    if response.status_code in (404, 410):
+        raise ProductPageMissing(response.status_code)
+    response.raise_for_status()
     response.encoding = "utf-8"
     return parse_stock(response.text)
 
@@ -139,14 +153,29 @@ class Monitor:
     def check_once(self):
         self.state["lastAttemptAt"] = timestamp()
         stock = self.fetch()
-        self.state.update(lastSuccessAt=timestamp(), lastStock=asdict(stock))
+        self.state.update(lastSuccessAt=timestamp(), lastStock=asdict(stock),
+                          monitorStatus="sale_ended" if stock.sale_ended else "checking_stock")
         self.save()
         logging.info("stock_check sku=%s price=%s availability=%s delivery=%s",
                      stock.sku, stock.price, stock.availability, stock.delivery)
-        if self.state.get("errorNotified"):
+        page_returned = self.state.get("pageMissing", False)
+        if page_returned:
+            self.notify("【商品ページ再掲載】GALLERIAの商品ページを再び確認できました。\n"
+                        + f"現在: {stock.delivery}\n表示価格: {stock.price:,}円（税込）\n" + self.url)
+            self.state.update(pageMissing=False, pageMissingNotified=False, errorNotified=False)
+            self.save()
+        elif self.state.get("errorNotified"):
             self.notify("【監視復旧】GALLERIAの在庫確認が正常に戻りました。\n" + self.url)
             self.state["errorNotified"] = False
             self.save()
+        if stock.sale_ended and not self.state.get("saleEndedNotified"):
+            if not page_returned:
+                self.notify("【販売終了表示】GALLERIAの商品ページが「販売終了」に変わりました。\n"
+                            + "現在購入できません。販売再開の確認は1分ごとに継続します。\n" + self.url)
+            self.state["saleEndedNotified"] = True
+            self.save()
+        elif not stock.sale_ended:
+            self.state["saleEndedNotified"] = False
         if not stock.available:
             self.state["availabilityNotified"] = False
             self.save()
@@ -167,9 +196,25 @@ class Monitor:
         self.save()
         return stock
 
+    def record_page_missing(self, error):
+        self.state.update(pageMissing=True, monitorStatus="page_missing",
+                          lastPageMissingAt=timestamp(), lastHttpStatus=error.status_code)
+        self.save()
+        logging.warning("product_page_missing status=%s; stock is unknown", error.status_code)
+        if not self.state.get("pageMissingNotified"):
+            previous_delivery = self.state.get("lastStock", {}).get("delivery", "未確認")
+            self.notify("【商品ページ掲載なし】GALLERIAの商品ページが見つかりません。\n"
+                        + f"HTTP {error.status_code} / 最後に確認した表示: {previous_delivery}\n"
+                        + "現在の在庫は確認できません。再掲載を1分ごとに確認し、"
+                        + "ページ復活・在庫復活時に通知します。\n" + self.url)
+            self.state.update(pageMissingNotified=True, errorNotified=False)
+        self.state["consecutiveFailures"] = 0
+        self.save()
+
     def record_failure(self, error):
         failures = self.state.get("consecutiveFailures", 0) + 1
-        self.state.update(consecutiveFailures=failures, lastErrorAt=timestamp(), lastError=str(error))
+        self.state.update(consecutiveFailures=failures, lastErrorAt=timestamp(), lastError=str(error),
+                          monitorStatus="error")
         self.save()
         logging.error("stock_check_failed count=%s error=%s", failures, error)
         if failures >= 3 and time.time() - self.state.get("lastErrorNotificationEpoch", 0) >= 3600:

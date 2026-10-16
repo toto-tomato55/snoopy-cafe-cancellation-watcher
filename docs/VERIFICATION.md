@@ -33,3 +33,26 @@ Actual restocking has not occurred during verification; the restock transition
 was tested with synthetic product data. The live Pi sent the startup/test message.
 Network/site restrictions can prevent a check. Three consecutive failures trigger
 an error notification when Discord is reachable; recovery is also notified.
+
+## 2026-10-16: product listing disappeared
+
+Pi logs confirm OutOfStock/在庫なし through 13:52 JST, then 販売終了 from
+13:53 through 14:03. HTTP 404 started at 14:04. Both the base product URL and
+the previously observed SKU URL MC21585-SN4438.html return HTTP 404 from Windows.
+This is a listing change, not a Pi service crash. Active/enabled was verified.
+
+The updated monitor treats 404/410 as page_missing, preserves the last confirmed
+stock and its timestamp, and checks for relisting every 60 seconds. It sends one
+listing-missing notice per episode, persists that flag across restarts, and sends
+a separate notice on relisting. Relisting is not treated as restocking. Other
+network/parser failures still use the existing error notification policy.
+
+Local unittest: 11 tests passed, including HTTP classification, sales-ended status,
+notification retry, state persistence, and preventing false restock on relisting.
+The live page is missing, so successful live stock parsing cannot currently be
+verified; synthetic fixtures verify the recovery and restock transitions.
+
+Updated Pi release: 20261016T051619-4887935f. At 14:17:35 JST the live service
+recorded HTTP 404 with monitorStatus=page_missing and pageMissingNotified=true.
+The latter is saved only after Discord accepts the specialized notice. Historical
+lastSuccessAt (14:03:31 JST, 販売終了) was preserved rather than set to the 404 time.

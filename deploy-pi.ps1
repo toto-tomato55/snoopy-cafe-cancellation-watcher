@@ -1,17 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $tool = 'C:\claude-tools\raspberrypi-5plus\bin\pi.cmd'
-. 'C:\claude-tools\raspberrypi-5plus\scripts\common.ps1'
-$configuration = Join-Path $PSScriptRoot '.env'
-if (-not (Test-Path -LiteralPath $configuration)) { throw 'Create .env before deployment' }
-$shared = "$($PiConfig.remoteRoot)/galleria-stock/shared"
-$quotedShared = Quote-Bash $shared
-# pi env restarts an existing service; seed configuration before the first install.
-Invoke-PiCommand "set -e; mkdir -p $quotedShared; chmod 700 $quotedShared"
-$scpOptions = @('-P', [string]$PiConfig.port, '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8',
-                '-o', 'StrictHostKeyChecking=accept-new', '-i', $PiConfig.identityFile)
-& $ScpExe @scpOptions $configuration "$($PiConfig.user)@$($PiConfig.host):$shared/.env.pending"
-if ($LASTEXITCODE -ne 0) { throw 'Configuration upload failed' }
-Invoke-PiCommand "set -e; chmod 600 $quotedShared/.env.pending; mv -f $quotedShared/.env.pending $quotedShared/.env"
+# Preserve the configured service's runtime secrets; use pi env for changes.
 $stage = Join-Path ([IO.Path]::GetTempPath()) ('galleria-stock-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stage | Out-Null
 try {
