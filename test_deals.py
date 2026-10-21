@@ -52,10 +52,29 @@ class AdapterTests(unittest.TestCase):
           <tr><th>グラフィックス</th><td>RTX 5080 16GB</td></tr></table></div>'''
         result = parse_dospara_catalog(html, "RTX 5080")
         self.assertEqual(result.offers[0].price, 320000)
+        limited = parse_dospara_catalog(html.replace("/TC30/", "/TC917/"), "RTX 5080")
+        self.assertEqual(limited.offers[0].item_id, "MC100")
+        self.assertEqual(limited.offers[0].url, "https://www.dospara.co.jp/TC917/MC100.html")
+        self.assertTrue(parse_dospara_detail(dospara_detail(), limited.offers[0]).available)
         with self.assertRaises(ValueError):
             parse_dospara_catalog(html, "RTX 5070 Ti")
         with self.assertRaises(ValueError):
             parse_dospara_catalog("<html>Access denied</html>", "RTX 5080")
+
+    def test_dospara_listing_rejects_wrong_identity_and_untrusted_routes(self):
+        template = '''<div class="product" data-pid="MC24683">
+          <p class="p-products-all-item-product__name__text"><a href="{url}">GALLERIA Test</a></p>
+          <div class="p-products-all-item-product__number">280,000</div>
+          <table><tr><th>CPU</th><td>Core i7</td></tr>
+          <tr><th>グラフィックス</th><td>RTX 5070 Ti</td></tr></table></div>'''
+        for url in ("/TC917/MC99999.html", "https://example.com/TC917/MC24683.html",
+                    "http://www.dospara.co.jp/TC917/MC24683.html",
+                    "/TC917/not-a-product.html", "/other/MC24683.html",
+                    "/TC917/MC24683-SN123.html"):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                parse_dospara_catalog(template.format(url=url), "RTX 5070 Ti")
+        with self.assertRaisesRegex(ValueError, "Unexpected product path: /other/"):
+            parse_dospara_catalog(template.format(url="/other/MC24683.html"), "RTX 5070 Ti")
 
     def test_oz_listing_parses_specs_and_retains_sorted_pagination(self):
         html = '''<ul class="category-item-list"><li class="item-list">
@@ -155,6 +174,27 @@ class NotificationTests(unittest.TestCase):
         self.accept(offer())
         self.assertEqual(len(self.messages), 1)
         self.assertEqual(self.monitor.state["sources"]["oz"]["status"], "error")
+
+    def test_recovery_is_recorded_only_after_discord_accepts(self):
+        self.monitor.state["sources"]["galleria"] = {
+            "status": "error", "failures": 3, "errorNotified": True}
+        def fail(_):
+            raise RuntimeError("Discord returned HTTP 500")
+        self.monitor.notify = fail
+        with self.assertRaises(RuntimeError):
+            self.accept()
+        status = self.monitor.state["sources"]["galleria"]
+        self.assertEqual(status["status"], "error")
+        self.assertTrue(status["errorNotified"])
+        self.monitor.notify = self.messages.append
+        self.accept()
+        self.assertEqual(len(self.messages), 1)
+        self.assertIn("監視復旧", self.messages[0])
+        self.assertEqual(status["status"], "ok")
+        self.assertFalse(status["errorNotified"])
+        self.assertEqual(status["failures"], 0)
+        self.accept()
+        self.assertEqual(len(self.messages), 1)
 
 
 if __name__ == "__main__":

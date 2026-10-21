@@ -65,7 +65,7 @@ def safe_url(base, value, path_pattern=None):
     if parsed.scheme != "https" or parsed.netloc != urlparse(base).netloc:
         raise ValueError("Unexpected store URL")
     if path_pattern and not re.fullmatch(path_pattern, parsed.path):
-        raise ValueError("Unexpected product path")
+        raise ValueError("Unexpected product path: " + parsed.path[:180])
     return result
 
 
@@ -119,9 +119,10 @@ def parse_dospara_catalog(html, expected_gpu):
         name = text(link)
         if not name.startswith("GALLERIA "):
             continue
-        url = safe_url(DOSPARA, link["href"], r"/TC30/MC\d+\.html")
+        # Catalog membership and product identity do not depend on the URL's category.
+        url = safe_url(DOSPARA, link["href"], r"/TC\d+/MC\d+\.html")
         item_id = row["data-pid"]
-        if urlparse(url).path != "/TC30/" + item_id + ".html" or not specs.get("CPU"):
+        if urlparse(url).path.rsplit("/", 1)[-1] != item_id + ".html" or not specs.get("CPU"):
             raise ValueError("GALLERIA product identity/specifications changed")
         offers.append(Offer("galleria", item_id, url, name, specs["CPU"], gpu, price,
                             stock_flag(text(row.select_one(".p-products-all-item-product__price"))),
