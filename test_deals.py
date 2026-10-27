@@ -3,8 +3,9 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
-from deals import (Catalog, DealMonitor, Offer, Scan, gpu_name, load_limits,
+from deals import (Catalog, DealMonitor, GRID, Offer, Scan, Store, gpu_name, load_limits,
                    parse_dospara_catalog, parse_dospara_detail, parse_oz_catalog,
                    parse_oz_detail, stock_flag)
 
@@ -108,6 +109,45 @@ class AdapterTests(unittest.TestCase):
             parse_oz_detail(html.replace("RTX5080", "RTX5070"), offer("oz"))
 
 
+class ScanTests(unittest.TestCase):
+    def test_galleria_reads_later_discount_even_if_first_page_exceeds_cap(self):
+        next_url = GRID + "?prefv1=GeForce+RTX+5080&srule=03&start=40&sz=40"
+        for prices in ([400000, 410000], [410000, 400000]):
+            with self.subTest(prices=prices):
+                store = Store("galleria", {"RTX 5080": 320000})
+                self.addCleanup(store.session.close)
+                candidate = offer(price=300000)
+                pages = [Catalog([], prices, next_url), Catalog([candidate], [300000], None)]
+                with patch.object(store, "get", side_effect=["first", "last", "detail"]) as get, \
+                        patch("deals.parse_dospara_catalog", side_effect=pages), \
+                        patch("deals.parse_dospara_detail", return_value=candidate) as detail:
+                    result = store.scan()
+                self.assertEqual(result.offers, [candidate])
+                self.assertEqual(result.pages, 2)
+                self.assertEqual(result.listed, 3)
+                self.assertEqual(result.errors, [])
+                self.assertEqual(get.call_args_list[1].args, (next_url,))
+                detail.assert_called_once_with("detail", candidate)
+
+    def test_galleria_page_limit_remains_an_error_not_a_partial_success(self):
+        store = Store("galleria", {"RTX 5080": 320000})
+        self.addCleanup(store.session.close)
+        pages = [Catalog([], [400000], GRID + f"?prefv1=GeForce+RTX+5080&srule=03&start={i * 40}")
+                 for i in range(1, 13)]
+        with patch.object(store, "get", return_value="page"), \
+                patch("deals.parse_dospara_catalog", side_effect=pages), \
+                self.assertRaisesRegex(ValueError, "page limit"):
+            store.scan()
+
+    def test_oz_still_requires_price_order_before_early_stop(self):
+        store = Store("oz", LIMITS)
+        self.addCleanup(store.session.close)
+        with patch.object(store, "get", return_value="page"), \
+                patch("deals.parse_oz_catalog", return_value=Catalog([], [400000, 300000], None)), \
+                self.assertRaisesRegex(ValueError, "price sorting"):
+            store.scan()
+
+
 class NotificationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -195,6 +235,45 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(status["failures"], 0)
         self.accept()
         self.assertEqual(len(self.messages), 1)
+
+    def test_error_notifies_once_until_recovery_even_after_restart_and_days(self):
+        error = RuntimeError("Store price sorting changed")
+        with self.assertLogs(level="ERROR"):
+            for _ in range(2):
+                self.monitor.failure("galleria", error)
+            self.assertEqual(self.messages, [])
+            self.monitor.failure("galleria", error)
+        self.assertEqual(len(self.messages), 1)
+        self.monitor = DealMonitor(self.path, LIMITS, self.messages.append)
+        with patch("deals.time.time", return_value=10**12), self.assertLogs(level="ERROR"):
+            self.monitor.failure("galleria", RuntimeError("a different error during the same outage"))
+            self.monitor.failure("galleria", error)
+            self.monitor.failure("oz", error)
+            self.monitor.failure("oz", error)
+            self.monitor.failure("oz", error)
+        self.assertEqual(len(self.messages), 2)
+        self.assertIn("oz", self.messages[-1])
+        self.accept()
+        self.assertEqual(len(self.messages), 3)
+        self.assertIn("監視復旧", self.messages[-1])
+        with self.assertLogs(level="ERROR"):
+            for _ in range(3):
+                self.monitor.failure("galleria", error)
+        self.assertEqual(len(self.messages), 4)
+
+    def test_error_notification_failure_is_retried_without_false_ack(self):
+        def fail(_):
+            raise RuntimeError("Discord returned HTTP 500")
+        self.monitor.notify = fail
+        with self.assertLogs(level="ERROR"):
+            for _ in range(3):
+                self.monitor.failure("oz", RuntimeError("HTTP 503"))
+        self.assertFalse(self.monitor.state["sources"]["oz"].get("errorNotified"))
+        self.monitor = DealMonitor(self.path, LIMITS, self.messages.append)
+        with self.assertLogs(level="ERROR"):
+            self.monitor.failure("oz", RuntimeError("HTTP 503"))
+        self.assertEqual(len(self.messages), 1)
+        self.assertTrue(self.monitor.state["sources"]["oz"]["errorNotified"])
 
 
 if __name__ == "__main__":

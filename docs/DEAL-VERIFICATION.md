@@ -69,3 +69,38 @@ caches cannot be discovered until published there.
 - The pre-existing GALLERIA `errorNotified=true` flag was cleared to false and
   failures reset from 3320 to zero only after the recovery message was accepted
   by Discord. No notification history or error counters were manually reset.
+
+## Quiet outage notifications and catalog order repair: 2026-10-27
+
+- User requested no repeated outage messages before recovery. After three
+  consecutive failed reads, each store now sends one error notification per
+  continuous outage, not hourly reminders. The existing persisted
+  `errorNotified` flag also suppresses repeats after a restart or an error-text
+  change. Discord failures remain retryable; recovery and deal alerts remain on.
+- Pi was active/enabled but GALLERIA had 261 consecutive failed reads at
+  21:48 JST; OZ was still reading successfully. The live GALLERIA grid's display
+  prices genuinely run backwards (e.g. 394980 followed by 379980 JPY), making
+  price-based early termination unsafe.
+- GALLERIA now follows every page of each configured GPU filter, using 40-row
+  pages and the existing 12-page-per-GPU safety limit. It no longer relies on
+  display price ordering. GPU/identity checks, pagination checks, price limits,
+  detail verification and OZ's sorted price-cutoff scan are retained.
+- All 30 unit tests passed locally. Added cases cover late-page bargains after
+  above-budget pages, reversed prices, page-limit failures, unchanged OZ order
+  validation, one notification across days/restarts/error changes, per-store
+  isolation, a fresh outage after recovery, and retry after Discord rejection.
+- Live local scan succeeded with GALLERIA 7 pages / 259 rows and OZ 3 pages /
+  144 rows, no matches, unresolved products or errors. A 100-row page trial
+  timed out; the deployed scanner uses the verified 40-row page size instead.
+- Deployed through `deploy-pi.ps1` to release
+  `20261027T125552-a81ad1ed`, retaining credentials and persisted notification
+  state. Service is active/running and boot-enabled; all 30 tests passed on Pi.
+- First Pi read succeeded for OZ at 21:56:23 JST and GALLERIA at 21:57:29 JST.
+  The GALLERIA recovery notification was accepted by Discord before clearing
+  `errorNotified` and resetting failures from 268 to zero. No state was manually
+  reset and no extra synthetic Discord test message was sent.
+- The first full cycle took 70.42 seconds including recovery notification;
+  the configured interval remains 60 seconds, but slow scans can extend it.
+- A second Pi read also succeeded: OZ 21:57:32 and GALLERIA 21:58:31 JST,
+  with unchanged counts and zero matches/errors. That cycle took 61.36 seconds.
+- The historical cafe GitHub workflow remains `disabled_manually`.

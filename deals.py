@@ -238,7 +238,7 @@ class Store:
         groups = list(self.limits) if self.name == "galleria" else [None]
         for gpu in groups:
             url = GRID + "?" + urlencode({"cgid": "TC30", "prefn1": "txGraphicFilter",
-                                           "prefv1": "GeForce " + gpu, "srule": "03", "start": 0, "sz": 20}) if gpu else OZ + "/view/category/all_items?sort=price"
+                                           "prefv1": "GeForce " + gpu, "srule": "03", "start": 0, "sz": 40}) if gpu else OZ + "/view/category/all_items?sort=price"
             cap = self.limits[gpu] if gpu else max(self.limits.values())
             previous_price, seen_urls = 0, set()
             for _ in range(12):
@@ -249,14 +249,16 @@ class Store:
                 page = parse_dospara_catalog(html, gpu) if gpu else parse_oz_catalog(html, url)
                 pages += 1
                 listed += len(page.prices)
-                for price in page.prices:
-                    if price < previous_price:
-                        raise ValueError("Store price sorting changed; cannot safely stop pagination")
-                    previous_price = price
+                if not gpu:
+                    for price in page.prices:
+                        if price < previous_price:
+                            raise ValueError("Store price sorting changed; cannot safely stop pagination")
+                        previous_price = price
                 for item in page.offers:
                     if item.gpu in self.limits and item.price <= self.limits[item.gpu]:
                         candidates[item.key] = item
-                if page.prices[-1] > cap or not page.next_url:
+                # GALLERIA display prices can be unsorted; inspect every filtered page.
+                if not page.next_url or (not gpu and page.prices[-1] > cap):
                     break
                 url = safe_url(DOSPARA if gpu else OZ, page.next_url)
                 if gpu:
@@ -297,10 +299,11 @@ class DealMonitor:
         status["failures"] = status.get("failures", 0) + 1
         self.save()
         logging.error("deal_scan_failed source=%s failures=%s error=%s", source, status["failures"], error)
-        if status["failures"] >= 3 and time.time() - status.get("lastErrorNotice", 0) >= 3600:
+        if status["failures"] >= 3 and not status.get("errorNotified"):
             try:
                 self.notify(f"【お得PC監視エラー】{source}の確認に3回以上失敗しています。\n"
-                            + "再試行を継続します。他店の確認は独立して継続します。\n" + str(error)[:400])
+                            + "再試行を継続します。他店の確認は独立して継続します。\n"
+                            + "この障害の再通知は行わず、復旧時にお知らせします。\n" + str(error)[:400])
             except Exception:
                 logging.error("deal_error_notification_failed source=%s", source)
                 return
