@@ -295,13 +295,17 @@ class DealMonitor:
 
     def failure(self, source, error):
         status = self.state["sources"].setdefault(source, {})
+        now = time.time()
+        started = status.setdefault("failureStartedAt", now)
         status.update(lastAttemptAt=timestamp(), lastError=str(error)[:500], status="error")
         status["failures"] = status.get("failures", 0) + 1
         self.save()
         logging.error("deal_scan_failed source=%s failures=%s error=%s", source, status["failures"], error)
-        if status["failures"] >= 3 and not status.get("errorNotified"):
+        notice_due = now - started >= 3600 if source == "galleria" else status["failures"] >= 3
+        if notice_due and not status.get("errorNotified"):
+            reason = "価格・在庫を1時間以上確認できていません。" if source == "galleria" else "確認に3回以上失敗しています。"
             try:
-                self.notify(f"【お得PC監視エラー】{source}の確認に3回以上失敗しています。\n"
+                self.notify(f"【お得PC監視エラー】{source}の{reason}\n"
                             + "再試行を継続します。他店の確認は独立して継続します。\n"
                             + "この障害の再通知は行わず、復旧時にお知らせします。\n" + str(error)[:400])
             except Exception:
@@ -342,6 +346,7 @@ class DealMonitor:
         if status.get("errorNotified"):
             self.notify(f"【お得PC監視復旧】{source}の価格・在庫確認が正常に戻りました。")
         status.update(lastSuccessAt=timestamp(), failures=0, errorNotified=False, status="ok")
+        status.pop("failureStartedAt", None)
         self.save()
         logging.info("deal_scan_ok source=%s pages=%s listed=%s matches=%s", source, scan.pages, scan.listed, matches)
 

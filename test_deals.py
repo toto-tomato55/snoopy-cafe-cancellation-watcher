@@ -238,10 +238,11 @@ class NotificationTests(unittest.TestCase):
 
     def test_error_notifies_once_until_recovery_even_after_restart_and_days(self):
         error = RuntimeError("Store price sorting changed")
-        with self.assertLogs(level="ERROR"):
+        with patch("deals.time.time", return_value=10000) as clock, self.assertLogs(level="ERROR"):
             for _ in range(2):
                 self.monitor.failure("galleria", error)
             self.assertEqual(self.messages, [])
+            clock.return_value = 13600
             self.monitor.failure("galleria", error)
         self.assertEqual(len(self.messages), 1)
         self.monitor = DealMonitor(self.path, LIMITS, self.messages.append)
@@ -256,10 +257,71 @@ class NotificationTests(unittest.TestCase):
         self.accept()
         self.assertEqual(len(self.messages), 3)
         self.assertIn("監視復旧", self.messages[-1])
-        with self.assertLogs(level="ERROR"):
+        with patch("deals.time.time", return_value=20000) as clock, self.assertLogs(level="ERROR"):
             for _ in range(3):
                 self.monitor.failure("galleria", error)
+            self.assertEqual(len(self.messages), 3)
+            clock.return_value = 23600
+            self.monitor.failure("galleria", error)
         self.assertEqual(len(self.messages), 4)
+
+    def test_galleria_short_outages_and_their_recoveries_are_silent(self):
+        with patch("deals.time.time", return_value=10000) as clock:
+            for start in (10000, 20000):
+                for elapsed in (0, 60, 120, 3599):
+                    clock.return_value = start + elapsed
+                    with self.assertLogs(level="ERROR"):
+                        self.monitor.failure("galleria", RuntimeError("timeout"))
+                    self.assertEqual(self.messages, [])
+                self.accept()
+                self.assertEqual(self.messages, [])
+                self.assertNotIn("failureStartedAt", self.monitor.state["sources"]["galleria"])
+                self.assertEqual(self.monitor.state["sources"]["galleria"]["failures"], 0)
+
+    def test_galleria_one_hour_boundary_survives_restart_and_error_changes(self):
+        with patch("deals.time.time", return_value=10000) as clock:
+            with self.assertLogs(level="ERROR"):
+                self.monitor.failure("galleria", RuntimeError("connect timeout"))
+            self.monitor = DealMonitor(self.path, LIMITS, self.messages.append)
+            clock.return_value = 13599
+            with self.assertLogs(level="ERROR"):
+                self.monitor.failure("galleria", RuntimeError("read timeout"))
+            self.assertEqual(self.messages, [])
+            clock.return_value = 13600
+            with self.assertLogs(level="ERROR"):
+                self.monitor.failure("galleria", RuntimeError("HTTP 503"))
+            self.assertEqual(len(self.messages), 1)
+            self.assertIn("1時間以上", self.messages[0])
+            self.assertNotIn("3回以上", self.messages[0])
+            self.accept()
+            self.assertEqual(len(self.messages), 2)
+            self.assertIn("監視復旧", self.messages[-1])
+
+    def test_galleria_legacy_state_without_start_time_waits_a_full_hour(self):
+        self.monitor.state["sources"]["galleria"] = {"failures": 100, "status": "error"}
+        self.monitor.save()
+        with patch("deals.time.time", return_value=10000), self.assertLogs(level="ERROR"):
+            self.monitor.failure("galleria", RuntimeError("timeout"))
+        self.assertEqual(self.messages, [])
+        self.assertEqual(self.monitor.state["sources"]["galleria"]["failureStartedAt"], 10000)
+
+    def test_galleria_hourly_alert_retries_if_discord_rejects_it(self):
+        with patch("deals.time.time", return_value=10000) as clock:
+            with self.assertLogs(level="ERROR"):
+                self.monitor.failure("galleria", RuntimeError("timeout"))
+            def fail(_):
+                raise RuntimeError("Discord returned HTTP 500")
+            self.monitor.notify = fail
+            clock.return_value = 13600
+            with self.assertLogs(level="ERROR"):
+                self.monitor.failure("galleria", RuntimeError("timeout"))
+            self.assertFalse(self.monitor.state["sources"]["galleria"].get("errorNotified"))
+            self.monitor = DealMonitor(self.path, LIMITS, self.messages.append)
+            clock.return_value = 13660
+            with self.assertLogs(level="ERROR"):
+                self.monitor.failure("galleria", RuntimeError("timeout"))
+            self.assertEqual(len(self.messages), 1)
+            self.assertTrue(self.monitor.state["sources"]["galleria"]["errorNotified"])
 
     def test_error_notification_failure_is_retried_without_false_ack(self):
         def fail(_):

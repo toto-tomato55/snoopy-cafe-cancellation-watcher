@@ -104,3 +104,35 @@ caches cannot be discovered until published there.
 - A second Pi read also succeeded: OZ 21:57:32 and GALLERIA 21:58:31 JST,
   with unchanged counts and zero matches/errors. That cycle took 61.36 seconds.
 - The historical cafe GitHub workflow remains `disabled_manually`.
+
+## GALLERIA one-hour outage threshold: 2026-11-18
+
+- User requested silence for brief GALLERIA failures. Its alert threshold is
+  now one continuous hour from the first failed check, not three failed checks.
+  A successful scan clears the timer. Unannounced outages also recover silently.
+  An announced outage still produces one recovery message, and ongoing outages
+  do not produce repeated alerts. OZ's three-failure threshold is unchanged.
+- `failureStartedAt` is saved with the existing per-store state, so restarts and
+  changing error text do not restart the clock. Old state without a start time
+  begins timing on the next failure rather than guessing a historical duration.
+  Existing delivered-alert flags remain intact. Failed Discord sends retry
+  without recording a false delivery acknowledgement.
+- All 34 local tests passed, including 3599/3600-second boundaries, silent
+  short-outage recovery, successive separate outages, restart persistence,
+  legacy-state handling and Discord rejection/retry. Tests use a fake clock and
+  in-memory notifications; no synthetic Discord messages were sent.
+- The live Pi source hash matched the local baseline before deployment.
+  Both stores were reading successfully: GALLERIA 10 pages / 361 rows,
+  OZ 2 pages / 96 rows, with no qualifying PCs. The 60-second interval is a
+  target; observed full scans took about 76-81 seconds before this change.
+- Deployed through `deploy-pi.ps1` to release
+  `20261118T134515-43221e2b`, preserving runtime secrets and notification history.
+  Active/running and boot-enabled were verified, and all 34 tests passed on Pi.
+- The first post-deployment read succeeded for OZ at 22:46:31 JST and GALLERIA
+  at 22:48:11 JST, with unchanged row counts and no qualifying PCs. Error-notice
+  timestamps remained unchanged and both `errorNotified` flags were false;
+  deployment did not emit new error, recovery or startup/test notifications.
+- The next GALLERIA scan also succeeded at 22:49:37 JST (361 rows, zero
+  matches/unresolved products), following OZ's next success at 22:48:13 JST.
+  First post-deployment cycle took 103.21 seconds; subsequent GALLERIA reads
+  were about 86 seconds apart. No polling/performance behavior was changed.
