@@ -246,11 +246,14 @@ class NotificationTests(unittest.TestCase):
             self.monitor.failure("galleria", error)
         self.assertEqual(len(self.messages), 1)
         self.monitor = DealMonitor(self.path, LIMITS, self.messages.append)
-        with patch("deals.time.time", return_value=10**12), self.assertLogs(level="ERROR"):
+        with patch("deals.time.time", return_value=10**12) as clock, self.assertLogs(level="ERROR"):
             self.monitor.failure("galleria", RuntimeError("a different error during the same outage"))
             self.monitor.failure("galleria", error)
             self.monitor.failure("oz", error)
             self.monitor.failure("oz", error)
+            self.monitor.failure("oz", error)
+            self.assertEqual(len(self.messages), 1)
+            clock.return_value += 3600
             self.monitor.failure("oz", error)
         self.assertEqual(len(self.messages), 2)
         self.assertIn("oz", self.messages[-1])
@@ -327,15 +330,53 @@ class NotificationTests(unittest.TestCase):
         def fail(_):
             raise RuntimeError("Discord returned HTTP 500")
         self.monitor.notify = fail
-        with self.assertLogs(level="ERROR"):
+        with patch("deals.time.time", return_value=10000) as clock, self.assertLogs(level="ERROR"):
             for _ in range(3):
                 self.monitor.failure("oz", RuntimeError("HTTP 503"))
+            clock.return_value = 13600
+            self.monitor.failure("oz", RuntimeError("HTTP 503"))
         self.assertFalse(self.monitor.state["sources"]["oz"].get("errorNotified"))
         self.monitor = DealMonitor(self.path, LIMITS, self.messages.append)
-        with self.assertLogs(level="ERROR"):
+        with patch("deals.time.time", return_value=13660), self.assertLogs(level="ERROR"):
             self.monitor.failure("oz", RuntimeError("HTTP 503"))
         self.assertEqual(len(self.messages), 1)
         self.assertTrue(self.monitor.state["sources"]["oz"]["errorNotified"])
+
+    def test_oz_short_outages_are_silent_and_one_hour_outages_notify_once(self):
+        scan = Scan([], set(), [], 2, 96)
+        with patch("deals.time.time", return_value=10000) as clock:
+            for elapsed in (0, 60, 120, 3599):
+                clock.return_value = 10000 + elapsed
+                with self.assertLogs(level="ERROR"):
+                    self.monitor.failure("oz", RuntimeError("read timeout"))
+            self.assertEqual(self.messages, [])
+            self.monitor.accept("oz", scan)
+            self.assertEqual(self.messages, [])
+            self.assertNotIn("failureStartedAt", self.monitor.state["sources"]["oz"])
+            clock.return_value = 20000
+            with self.assertLogs(level="ERROR"):
+                self.monitor.failure("oz", RuntimeError("connect timeout"))
+            self.monitor = DealMonitor(self.path, LIMITS, self.messages.append)
+            clock.return_value = 23599
+            with self.assertLogs(level="ERROR"):
+                self.monitor.failure("oz", RuntimeError("read timeout"))
+            self.assertEqual(self.messages, [])
+            clock.return_value = 23600
+            with self.assertLogs(level="ERROR"):
+                self.monitor.failure("oz", RuntimeError("HTTP 503"))
+            self.assertEqual(len(self.messages), 1)
+            self.assertIn("ozの価格・在庫を1時間以上", self.messages[0])
+            self.assertNotIn("3回以上", self.messages[0])
+            self.monitor = DealMonitor(self.path, LIMITS, self.messages.append)
+            clock.return_value = 30000
+            with self.assertLogs(level="ERROR"):
+                self.monitor.failure("oz", RuntimeError("read timeout"))
+            self.assertEqual(len(self.messages), 1)
+            self.monitor.accept("oz", scan)
+            self.assertEqual(len(self.messages), 2)
+            self.assertIn("監視復旧", self.messages[-1])
+            self.monitor.accept("oz", scan)
+            self.assertEqual(len(self.messages), 2)
 
 
 if __name__ == "__main__":

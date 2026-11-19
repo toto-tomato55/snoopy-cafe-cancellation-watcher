@@ -136,3 +136,34 @@ caches cannot be discovered until published there.
   matches/unresolved products), following OZ's next success at 22:48:13 JST.
   First post-deployment cycle took 103.21 seconds; subsequent GALLERIA reads
   were about 86 seconds apart. No polling/performance behavior was changed.
+
+## OZ one-hour outage threshold: 2026-11-19
+
+- User requested the same one-hour policy for OZ. Both stores now wait for one
+  continuous hour of failed checks, send one outage alert, then one recovery
+  message only if the outage alert was delivered. Brief outages and their
+  recoveries remain silent. Deal alerts and polling are unchanged.
+- The existing persisted `failureStartedAt` and acknowledgement flags are
+  reused without resetting state. The Discord-only error path retains its
+  previous threshold; this change is scoped to the two store sources.
+- All 35 local tests passed. OZ regression coverage includes silent short
+  outages and recovery, timer reset, 3599/3600-second boundaries across restart
+  and error-text changes, no repeat after restart or hours, one recovery, and
+  retry after Discord rejection. Fake clocks and in-memory notifications avoid
+  sending additional test messages to the user's channel.
+- Pi SSH was refreshed and verified. Runtime source hash matched the local
+  baseline; service was active/running and enabled. Pre-deployment reads were
+  GALLERIA 10 pages / 361 rows and OZ 2 pages / 96 rows, both with zero matches.
+- Deployed through `deploy-pi.ps1` to release
+  `20261119T135511-1458a963`, preserving runtime configuration and deal history.
+  Active/running and boot-enabled were verified; all 35 tests also passed on Pi.
+- First post-deployment OZ scan succeeded at 22:56:13 JST (2 pages / 96 rows,
+  no matches/errors). The error-notice timestamp and startup-delivery flag were
+  unchanged; no new error, recovery or startup/test notification was generated.
+- The following OZ read also succeeded at 22:57:40 JST, after a successful
+  GALLERIA read at 22:57:39 JST (10 pages / 361 rows). Both sources remained
+  status=ok with zero failures, matches and unresolved products. The 60-second
+  interval remains a target; this complete catalog scan took about 88 seconds.
+- During deployment the old worker exceeded systemd's stop timeout and was
+  killed before the new worker started. Persisted state remained valid and
+  the new worker's source checks and state updates succeeded as recorded above.

@@ -301,9 +301,9 @@ class DealMonitor:
         status["failures"] = status.get("failures", 0) + 1
         self.save()
         logging.error("deal_scan_failed source=%s failures=%s error=%s", source, status["failures"], error)
-        notice_due = now - started >= 3600 if source == "galleria" else status["failures"] >= 3
+        notice_due = now - started >= 3600 if source in ("galleria", "oz") else status["failures"] >= 3
         if notice_due and not status.get("errorNotified"):
-            reason = "価格・在庫を1時間以上確認できていません。" if source == "galleria" else "確認に3回以上失敗しています。"
+            reason = "価格・在庫を1時間以上確認できていません。" if source in ("galleria", "oz") else "確認に3回以上失敗しています。"
             try:
                 self.notify(f"【お得PC監視エラー】{source}の{reason}\n"
                             + "再試行を継続します。他店の確認は独立して継続します。\n"
